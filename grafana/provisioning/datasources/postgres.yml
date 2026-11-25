@@ -1,0 +1,19 @@
+# Grafana reads this file at start-up and creates the data source automatically.
+# ${...} values come from the container's environment (set in docker-compose.yml from .env).
+apiVersion: 1
+
+datasources:
+  - name: HeartbeatDB
+    uid: heartbeat-db
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432            # service name + port INSIDE the Docker network
+    user: grafana_reader          # the read-only user from sql/03_grafana_reader.sql
+    isDefault: true
+    editable: false
+    jsonData:
+      database: ${POSTGRES_DB}
+      sslmode: disable
+      postgresVersion: 1700       # PostgreSQL 17
+    secureJsonData:
+      password: ${GRAFANA_DB_PASSWORD}

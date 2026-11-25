@@ -1,0 +1,12 @@
+# Grafana reads this at start-up and loads every dashboard JSON file from `path`.
+apiVersion: 1
+
+providers:
+  - name: heartbeat
+    folder: Heartbeat
+    type: file
+    disableDeletion: true      # the file is the source of truth: it can't be deleted in the UI
+    allowUiUpdates: false      # UI edits are not saved; change the JSON file instead
+    updateIntervalSeconds: 30  # re-read the folder every 30 s
+    options:
+      path: /etc/grafana/dashboards
