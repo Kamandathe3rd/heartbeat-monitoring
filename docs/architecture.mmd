@@ -1,0 +1,40 @@
+flowchart LR
+    GEN["data_generator.py<br/>5 customers, 1 round/s<br/>~5% anomalies"]
+    PROD["producer.py<br/>JSON, key = customer_id<br/>acks=all, idempotent"]
+    KAFKA[("Kafka 4.3.1 (KRaft)<br/>topic: heartbeats<br/>3 partitions")]
+    CONS["consumer.py<br/>group: heartbeat-consumer<br/>batches up to 100 / 1 s"]
+    VAL{"validation.py<br/>rules in ONE place"}
+    HR[("heartbeat_readings<br/>valid readings<br/>+ is_anomaly flag")]
+    RJ[("rejected_readings<br/>dead-letter table<br/>+ reason, partition, offset")]
+
+    GEN -->|"customer_id, timestamp,<br/>heart_rate"| PROD
+    PROD -->|"localhost:9092<br/>EXTERNAL"| KAFKA
+    KAFKA -->|"consume"| CONS
+    CONS --> VAL
+    VAL -->|"40-180 bpm: normal<br/>20-39 / 181-250: flagged"| HR
+    VAL -->|"null, -1, 0, bad JSON"| RJ
+    CONS -.->|"commit offsets only<br/>AFTER the DB commit"| KAFKA
+
+    KUI["Kafbat UI<br/>localhost:8081"]
+    GRAF["Grafana dashboard<br/>localhost:3000<br/>grafana_reader (read-only)"]
+    PGA["pgAdmin / psql<br/>localhost:5433"]
+
+    KUI -->|"kafka:29092<br/>INTERNAL"| KAFKA
+    GRAF -->|"postgres:5432"| HR
+    GRAF --> RJ
+    PGA --> HR
+
+    subgraph LEGEND[" "]
+        direction LR
+        L1["Python on Windows (.venv)"]
+        L2[("Docker: core services")]
+        L3["Docker: optional profile 'tools'<br/>+ pgAdmin on Windows"]
+    end
+
+    classDef app fill:#e8f1ff,stroke:#3b6fb6,color:#10243e
+    classDef store fill:#eaf7ee,stroke:#2f8a4c,color:#123a20
+    classDef tool fill:#fff4e5,stroke:#c77700,color:#4a2c00
+    class GEN,PROD,CONS,VAL,L1 app
+    class KAFKA,HR,RJ,L2 store
+    class KUI,GRAF,PGA,L3 tool
+    style LEGEND fill:#ffffff,stroke:#bbbbbb
