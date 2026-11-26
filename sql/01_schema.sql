@@ -53,3 +53,25 @@ CREATE TABLE IF NOT EXISTS rejected_readings (
 
 COMMENT ON TABLE rejected_readings IS
     'Dead-letter table: messages that failed validation, with the reason and their Kafka position.';
+
+
+-- ---------------------------------------------------------------------
+-- Alerts raised by src/alerter.py (one row per alert)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS alerts (
+    id            BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    customer_id   VARCHAR(20)  NOT NULL,
+    rule          VARCHAR(30)  NOT NULL,              -- which alert rule fired
+    message       TEXT         NOT NULL,
+    triggered_at  TIMESTAMPTZ  NOT NULL,              -- event time that triggered the alert
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    email_sent    BOOLEAN      NOT NULL DEFAULT FALSE,
+
+    CONSTRAINT chk_alert_rule CHECK (rule IN ('sustained_anomaly', 'sensor_silence')),
+
+    -- The same alert is stored (and emailed) only once, even if messages are re-read
+    CONSTRAINT uq_alert UNIQUE (customer_id, rule, triggered_at)
+);
+
+COMMENT ON TABLE alerts IS
+    'Alerts raised by the alerter service: sustained anomalies and silent sensors.';

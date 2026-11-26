@@ -19,7 +19,8 @@ from collections import Counter
 import psycopg2
 from confluent_kafka import Consumer, KafkaException, Message
 
-from src.config import DB_CONFIG, KAFKA_BOOTSTRAP_SERVERS, KAFKA_GROUP_ID, KAFKA_TOPIC
+from src.config import KAFKA_BOOTSTRAP_SERVERS, KAFKA_GROUP_ID, KAFKA_TOPIC
+from src.db import connect_to_database, first_line
 from src.validation import ValidationError, validate_message
 
 logging.basicConfig(
@@ -31,10 +32,6 @@ logger = logging.getLogger("consumer")
 # Read up to BATCH_SIZE messages at a time, waiting at most POLL_TIMEOUT_SECONDS
 BATCH_SIZE = 100
 POLL_TIMEOUT_SECONDS = 1.0
-
-# Database retry: wait 2 s, then 4, 8, 16, 30, 30 ... seconds between attempts
-RETRY_START_SECONDS = 2
-RETRY_MAX_SECONDS = 30
 
 # How often to log the running totals
 SUMMARY_EVERY_SECONDS = 10
@@ -67,26 +64,6 @@ def create_consumer() -> Consumer:
 def log_assignment(consumer: Consumer, partitions: list) -> None:
     """Called by Kafka when this consumer is given partitions to read."""
     logger.info("Assigned partitions: %s", [p.partition for p in partitions])
-
-
-def first_line(error: Exception) -> str:
-    """The first line of an error message (psycopg2 errors span several lines)."""
-    text = str(error).strip()
-    return text.splitlines()[0] if text else type(error).__name__
-
-
-def connect_to_database():
-    """Open a PostgreSQL connection, retrying with a growing wait until it works."""
-    wait = RETRY_START_SECONDS
-    while True:
-        try:
-            connection = psycopg2.connect(**DB_CONFIG)
-            logger.info("Connected to PostgreSQL at %s:%s", DB_CONFIG["host"], DB_CONFIG["port"])
-            return connection
-        except psycopg2.OperationalError as error:
-            logger.error("PostgreSQL unavailable (%s). Retrying in %d s...", first_line(error), wait)
-            time.sleep(wait)
-            wait = min(wait * 2, RETRY_MAX_SECONDS)
 
 
 def raw_text(msg: Message) -> str:

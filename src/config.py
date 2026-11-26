@@ -47,3 +47,15 @@ DB_CONFIG = {
     "user": POSTGRES_USER,
     "password": POSTGRES_PASSWORD,
 }
+
+# ----- Email alerts (optional: leave SMTP_HOST empty to disable email) -----
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT") or 1025)
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "false").strip().lower() == "true"
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+ALERT_EMAIL_FROM = os.getenv("ALERT_EMAIL_FROM", "heartbeat-monitor@example.com").strip()
+ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "").strip()
+
+# ----- Alerter (optional service) -----
+KAFKA_ALERTER_GROUP_ID = os.getenv("KAFKA_ALERTER_GROUP_ID", "heartbeat-alerter").strip()

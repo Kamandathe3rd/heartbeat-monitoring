@@ -2,7 +2,8 @@
 
 A real-time data pipeline that simulates heart-rate sensors for several customers, streams the
 readings through **Apache Kafka**, validates them, and stores them in **PostgreSQL**, with an
-optional **Grafana** dashboard and **Kafbat UI** for monitoring.
+optional **Grafana** dashboard, **Kafbat UI** for monitoring, and a Python **alerting service**
+that emails alerts (tested locally with **Mailpit**).
 
 ![Data flow diagram](docs/architecture.png)
 
@@ -34,6 +35,7 @@ optional **Grafana** dashboard and **Kafbat UI** for monitoring.
 | PostgreSQL | `postgres:17` | Docker |
 | Grafana OSS (optional) | `grafana/grafana:13.3.1` | Docker, profile `tools` |
 | Kafbat UI (optional) | `ghcr.io/kafbat/kafka-ui:v1.5.0` | Docker, profile `tools` |
+| Mailpit - local test inbox (optional) | `axllent/mailpit:v1.34.0` | Docker, profile `tools` |
 | Python libraries | pinned in `requirements.txt` | `confluent-kafka 2.16.2`, `psycopg2-binary 2.9.13`, `python-dotenv 1.2.4`, `pytest 9.2.0` |
 
 ---
@@ -50,17 +52,18 @@ heartbeat-monitoring/
 ├── pytest.ini                    # test settings and the "integration" marker
 ├── src/
 │   ├── config.py                 # loads all settings from .env (one place)
+│   ├── db.py                     # shared PostgreSQL connection with retry
 │   ├── data_generator.py         # synthetic heart-rate readings
 │   ├── producer.py               # sends readings to Kafka
 │   ├── validation.py             # the validation rules (one place)
-│   └── consumer.py               # Kafka -> validation -> PostgreSQL
-├── sql/
-│   ├── 01_schema.sql             # tables, constraints, index
-│   ├── 02_queries.sql            # example queries (historical data)
-│   └── 03_grafana_reader.sql     # read-only user for Grafana
+│   ├── consumer.py               # Kafka -> validation -> PostgreSQL
+│   ├── alert_rules.py            # alert rules: sustained anomaly, sensor silence, cooldown
+│   ├── notifier.py               # sends alert emails over SMTP
+│   └── alerter.py                # second consumer group: rules -> alerts table + email
 ├── tests/
 │   ├── test_validation.py        # 27 unit tests
 │   ├── test_data_generator.py    # 14 unit tests
+│   ├── test_alert_rules.py       # 13 unit tests
 │   └── test_pipeline.py          # 2 end-to-end tests (real Kafka + PostgreSQL)
 ├── grafana/
 │   ├── provisioning/datasources/postgres.yml   # data source as code
@@ -166,6 +169,28 @@ docker compose --profile tools up -d
 The Grafana data source and the 8-panel dashboard are **provisioned from files** in `grafana/`,
 so they appear automatically with no manual setup.
 
+## Optional: email alerts
+
+`src/alerter.py` is a **second, independent Kafka consumer group** (`heartbeat-alerter`). It reads
+the same topic as the consumer (fan-out), applies the rules in `src/alert_rules.py`, and for every
+alert writes a log line, stores a row in the `alerts` table and sends an email.
+
+| Rule | Fires when |
+|---|---|
+| `sustained_anomaly` | 3 or more abnormal readings for one customer within 60 seconds |
+| `sensor_silence` | no reading from a customer for 30 seconds |
+| cooldown | the same customer + rule alerts at most once every 5 minutes |
+
+```powershell
+docker compose --profile tools up -d     # starts Mailpit (test inbox) with Grafana and Kafbat
+python -m src.notifier                   # optional: send one test email
+python -m src.alerter                    # start before the producer; Ctrl + C to stop
+```
+
+Emails appear in the Mailpit inbox at http://localhost:8025 (nothing is sent to the internet).
+To send real email, change only `.env` (for example Gmail: `SMTP_HOST=smtp.gmail.com`,
+`SMTP_PORT=587`, `SMTP_USE_TLS=true`, plus your address and an app password). Leave `SMTP_HOST`
+empty to switch email off; alerts are still logged and stored.
 ---
 
 ## Configuration
@@ -182,7 +207,9 @@ with a clear message if one is missing.
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | `heartbeat_db` / `heartbeat_user` / *(yours)* | consumer, Docker |
 | `GRAFANA_DB_PASSWORD` | *(yours)* | read-only Grafana user |
 | `GRAFANA_ADMIN_PASSWORD` | *(yours)* | Grafana login |
-
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USE_TLS` | `localhost` / `1025` / `false` (Mailpit) | alert emails (empty host = email off) |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | empty | only for a real mail server |
+| `ALERT_EMAIL_FROM` / `ALERT_EMAIL_TO` | `heartbeat-monitor@example.com` / *(yours)* | alert emails |
 ---
 
 ## How it works
@@ -213,7 +240,7 @@ with a clear message if one is missing.
 |---|---|---|
 | `heartbeat_readings` | `customer_id`, `recorded_at TIMESTAMPTZ`, `heart_rate SMALLINT`, `is_anomaly`, `ingested_at` | `CHECK (heart_rate BETWEEN 20 AND 250)`, `UNIQUE (customer_id, recorded_at)`, index on `recorded_at` |
 | `rejected_readings` | `raw_message TEXT`, `reason`, `kafka_partition`, `kafka_offset`, `rejected_at` | `UNIQUE (kafka_partition, kafka_offset)` |
-
+| `alerts` | `customer_id`, `rule`, `message`, `triggered_at`, `email_sent` | `CHECK` on the rule name, `UNIQUE (customer_id, rule, triggered_at)` |
 ---
 
 ## Design decisions
@@ -234,7 +261,10 @@ with a clear message if one is missing.
 | **Read-only Grafana user** | `grafana_reader` has SELECT only, read-only sessions and a 10 s statement timeout. Least privilege. |
 | **Optional tools behind a Compose profile** | `docker compose up -d` starts only the core pipeline. `--profile tools` adds Grafana and Kafbat. |
 | **Infrastructure and dashboards as code** | Schema, data source and dashboard are files in Git, so a fresh clone reproduces everything. |
-
+| **Alerts in a separate consumer group** | Fan-out: the alerter gets every message independently, so it keeps alerting even if the storing consumer is down. It starts at the latest message on its first run, so it never alerts about old history. |
+| **Alert on patterns, not single readings** | 3 abnormal readings in 60 s with a 5-minute cooldown avoids false alarms from one loose-strap spike and avoids alert floods. |
+| **Alerts stored, then emailed once** | `INSERT ... ON CONFLICT DO NOTHING RETURNING id` means only new alerts are emailed; `email_sent` records delivery, so a failed email is visible, not lost. |
+| **Mailpit for email** | A local test inbox: no account, no secrets, nothing leaves the PC. Real email needs only `.env` changes. |
 ---
 
 ## Testing
@@ -244,8 +274,8 @@ with a clear message if one is missing.
 | `test_validation.py` | 27 | no | every boundary (20, 39, 40, 180, 181, 250) and every reject reason |
 | `test_data_generator.py` | 14 | no | fields and types, realism per customer, anomaly rates (fixed random seed) |
 | `test_pipeline.py` | 2 | yes + running consumer | 6 kinds of message through real Kafka and PostgreSQL; duplicates stored once |
-
-All **43 tests pass**. The tests were also checked by breaking the code on purpose
+| `test_alert_rules.py` | 13 | no | window edges (60 s vs 61 s), cooldown, separate customers, silence, late messages |
+All **56 tests pass**. The tests were also checked by breaking the code on purpose
 (for example changing `<=` to `<` in the normal-range check makes 2 tests fail).
 
 ---
@@ -320,5 +350,6 @@ A sample of stored rows is in `docs/sample_heartbeat_readings.csv`.
 | README with setup guide and documentation | `README.md` |
 | Data flow diagram | `docs/architecture.png` (source: `docs/architecture.mmd`) |
 | Sample data outputs / screenshots | `docs/sample_heartbeat_readings.csv`, `docs/screenshots/` |
-| Test scripts | `tests/` (43 tests) |
+| Test scripts | `tests/` (56 tests) |
 | (Optional) Dashboard | `grafana/` (provisioned Grafana dashboard) + `docs/screenshots/10_grafana_dashboard.png` |
+| (Extension) Alerting with email | `src/alert_rules.py`, `src/alerter.py`, `src/notifier.py`, `alerts` table, `tests/test_alert_rules.py` |

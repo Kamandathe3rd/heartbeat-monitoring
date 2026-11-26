@@ -188,7 +188,7 @@
           "links": [],
           "title": "Anomalies",
           "vizConfig": {
-            "group": "gauge",
+            "group": "stat",
             "kind": "VizConfig",
             "spec": {
               "fieldConfig": {
@@ -213,17 +213,11 @@
                 "overrides": []
               },
               "options": {
-                "barShape": "flat",
-                "barWidthFactor": 0.5,
-                "effects": {
-                  "barGlow": false,
-                  "centerGlow": false,
-                  "gradient": true
-                },
-                "endpointMarker": "point",
-                "minVizHeight": 75,
-                "minVizWidth": 75,
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "auto",
                 "orientation": "auto",
+                "percentChangeColorMode": "standard",
                 "reduceOptions": {
                   "calcs": [
                     "lastNotNull"
@@ -231,14 +225,9 @@
                   "fields": "",
                   "values": false
                 },
-                "segmentCount": 1,
-                "segmentSpacing": 0.3,
-                "shape": "gauge",
-                "showThresholdLabels": false,
-                "showThresholdMarkers": true,
-                "sizing": "auto",
-                "sparkline": true,
-                "textMode": "auto"
+                "showPercentChange": false,
+                "textMode": "auto",
+                "wideLayout": true
               }
             },
             "version": "13.3.1"
@@ -885,6 +874,60 @@
             "version": "13.3.1"
           }
         }
+      },
+      "panel-9": {
+        "kind": "Panel",
+        "spec": {
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "hidden": false,
+                    "query": {
+                      "datasource": {
+                        "name": "heartbeat-db"
+                      },
+                      "group": "grafana-postgresql-datasource",
+                      "kind": "DataQuery",
+                      "spec": {
+                        "editorMode": "code",
+                        "format": "table",
+                        "rawQuery": true,
+                        "rawSql": "SELECT triggered_at AS \"Time\", customer_id AS \"Customer\", replace(rule, '_', ' ') AS \"Rule\", message AS \"Details\", email_sent AS \"Emailed\"\nFROM alerts\nWHERE $__timeFilter(triggered_at)\nORDER BY triggered_at DESC\nLIMIT 20"
+                      },
+                      "version": "v0"
+                    },
+                    "refId": "A"
+                  }
+                }
+              ],
+              "queryOptions": {},
+              "transformations": []
+            }
+          },
+          "description": "Alerts raised by src/alerter.py",
+          "id": 9,
+          "links": [],
+          "title": "Recent alerts",
+          "vizConfig": {
+            "group": "table",
+            "kind": "VizConfig",
+            "spec": {
+              "fieldConfig": {
+                "defaults": {},
+                "overrides": []
+              },
+              "options": {
+                "cellHeight": "sm",
+                "showHeader": true
+              }
+            },
+            "version": "13.3.1"
+          }
+        }
       }
     },
     "layout": {
@@ -961,6 +1004,15 @@
               "element": {
                 "kind": "ElementReference",
                 "name": "panel-8"
+              }
+            }
+          },
+          {
+            "kind": "AutoGridLayoutItem",
+            "spec": {
+              "element": {
+                "kind": "ElementReference",
+                "name": "panel-9"
               }
             }
           }
